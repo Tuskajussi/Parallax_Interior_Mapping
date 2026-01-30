@@ -101,6 +101,11 @@
         <div class="group">
             <label>Upload Texture <span class="value" id="uploadedName">roomtest5.exr</span></label>
             <input type="file" id="fileInput" accept=".exr,.jpg,.jpeg,.png,image/*">
+            <img id="preview" alt="texture preview" style="display:block;width:200px;margin-top:8px;border-radius:4px;border:1px solid #333;background:#000;cursor:zoom-in" />
+            <div style="margin-top:6px;display:flex;gap:6px;">
+                <button id="savePreviewBtn" style="flex:1">Save Preview</button>
+                <button id="clearPreviewBtn" style="flex:1">Clear Saved</button>
+            </div>
         </div>
     </div>
 
@@ -207,6 +212,9 @@
                     const url = URL.createObjectURL(file);
                     const nameEl = document.getElementById('uploadedName');
                     const ext = file.name.split('.').pop().toLowerCase();
+                        // remember uploaded file for preview decisions
+                        window._lastUploadedURL = url;
+                        window._lastUploadedExt = ext;
 
                     function applyTexture(tex, isSRGB) {
                         tex.wrapS = THREE.RepeatWrapping;
@@ -215,6 +223,8 @@
                         tex.needsUpdate = true;
                         material.uniforms.map.value = tex;
                         nameEl.textContent = file.name;
+                        // update preview from renderer snapshot
+                        try { updatePreview(); } catch (e) { /* ignore */ }
                     }
 
                     if (ext === 'exr') {
@@ -222,6 +232,8 @@
                         exrLoader.load(url, (tex) => {
                             applyTexture(tex, false);
                             URL.revokeObjectURL(url);
+                            // generate preview from texture (EXR)
+                            generatePreviewFromTexture(tex);
                         }, undefined, (err) => {
                             console.error('EXR load error', err);
                             URL.revokeObjectURL(url);
@@ -230,7 +242,11 @@
                         const texLoader = new THREE.TextureLoader();
                         texLoader.load(url, (tex) => {
                             applyTexture(tex, true);
-                            URL.revokeObjectURL(url);
+                            // for normal images we can simply point preview to the object URL
+                            const preview = document.getElementById('preview');
+                            if (preview) preview.src = url;
+                            // revoke URL after a short delay to allow browser to use it
+                            setTimeout(() => URL.revokeObjectURL(url), 30000);
                         }, undefined, (err) => {
                             console.error('Texture load error', err);
                             URL.revokeObjectURL(url);
@@ -251,6 +267,204 @@
             }
         });
         resizeObserver.observe(container);
+
+        // Preview update helper: snapshot the renderer and set preview image
+        function updatePreview() {
+            const preview = document.getElementById('preview');
+            if (!preview) return;
+            try {
+                // If user uploaded a normal image file, we already set preview.src to the object URL.
+                // For EXR (or when no file URL available) generate preview from the texture using a small render target.
+                const ext = window._lastUploadedExt || '';
+                if (ext && ext !== 'exr') {
+                    // nothing to do; preview already set to file URL
+                    return;
+                }
+                // fallback: if material map exists, render it to small RT and read pixels
+                if (material && material.uniforms && material.uniforms.map && material.uniforms.map.value) {
+                    generatePreviewFromTexture(material.uniforms.map.value);
+                }
+            } catch (e) {
+                console.warn('Preview update failed', e);
+            }
+        }
+
+        // Initial preview once scene is ready (call after material is created)
+        setTimeout(() => { try { updatePreview(); } catch(e){} }, 500);
+
+        // Save preview to localStorage (if small enough)
+        function savePreviewToStorage(dataURL) {
+            if (!dataURL) return;
+            try {
+                // limit ~200KB to avoid exceeding storage
+                if (dataURL.length > 200000) {
+                    console.warn('Preview too large to save (~' + Math.round(dataURL.length/1024) + 'KB)');
+                    return;
+                }
+                localStorage.setItem('pom_preview', dataURL);
+                console.log('Preview saved to localStorage');
+            } catch (e) {
+                console.warn('Saving preview failed', e);
+            }
+        }
+
+        function loadPreviewFromStorage() {
+            try {
+                const data = localStorage.getItem('pom_preview');
+                if (data) {
+                    const preview = document.getElementById('preview');
+                    if (preview) preview.src = data;
+                    const nameEl = document.getElementById('uploadedName');
+                    if (nameEl) nameEl.textContent = 'saved_preview';
+                }
+            } catch (e) { /* ignore */ }
+        }
+
+        function clearSavedPreview() {
+            localStorage.removeItem('pom_preview');
+            const preview = document.getElementById('preview');
+            if (preview) preview.src = '';
+            const nameEl = document.getElementById('uploadedName');
+            if (nameEl) nameEl.textContent = 'roomtest5.exr';
+        }
+
+        // click-to-zoom handlers
+        const previewImg = document.getElementById('preview');
+        if (previewImg) {
+            previewImg.addEventListener('click', () => {
+                const src = previewImg.src;
+                if (!src) return;
+                const modal = document.getElementById('previewModal');
+                const large = document.getElementById('previewLarge');
+                if (large && modal) {
+                    large.src = src;
+                    modal.style.display = 'flex';
+                }
+            });
+        }
+        const closeBtn = document.getElementById('closePreview');
+        if (closeBtn) closeBtn.addEventListener('click', () => { document.getElementById('previewModal').style.display = 'none'; });
+
+        const saveBtn = document.getElementById('savePreviewBtn');
+        if (saveBtn) saveBtn.addEventListener('click', () => {
+            const preview = document.getElementById('preview');
+            if (!preview || !preview.src) return;
+            // if preview is object URL, capture it via image draw
+            if (window._lastUploadedExt && window._lastUploadedExt !== 'exr') {
+                // try to fetch and convert to dataURL
+                captureImageToDataURL(preview.src, (dataURL) => { if (dataURL) savePreviewToStorage(dataURL); });
+            } else {
+                savePreviewToStorage(preview.src);
+            }
+        });
+
+        const clearBtn = document.getElementById('clearPreviewBtn');
+        if (clearBtn) clearBtn.addEventListener('click', () => { clearSavedPreview(); });
+
+        // Helper: capture image URL into dataURL via canvas
+        function captureImageToDataURL(src, cb) {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => {
+                const cw = 512; const ch = Math.max(128, Math.floor(cw * img.height / img.width));
+                const c = document.createElement('canvas'); c.width = cw; c.height = ch;
+                const ctx = c.getContext('2d');
+                // center-cover
+                const aspect = img.width / img.height;
+                const destAspect = cw / ch;
+                let dw = cw, dh = ch, dx = 0, dy = 0;
+                if (aspect > destAspect) {
+                    // image wider
+                    const scale = ch / img.height; dw = img.width * scale; dx = - (dw - cw) / 2;
+                } else {
+                    const scale = cw / img.width; dh = img.height * scale; dy = - (dh - ch) / 2;
+                }
+                ctx.drawImage(img, dx, dy, dw, dh);
+                try { cb(c.toDataURL('image/png')); } catch (e) { cb(null); }
+            };
+            img.onerror = () => cb(null);
+            img.src = src;
+        }
+
+        // load saved preview if exists
+        loadPreviewFromStorage();
+
+        // Generate a preview image from a Three.Texture (works for EXR data textures)
+        function generatePreviewFromTexture(tex) {
+            const preview = document.getElementById('preview');
+            if (!preview || !tex) return;
+            const w = 512;
+            const h = Math.max(128, Math.floor(w * 0.5));
+
+            const rt = new THREE.WebGLRenderTarget(w, h, { type: THREE.UnsignedByteType });
+            const prevScene = new THREE.Scene();
+            const materialPreview = new THREE.MeshBasicMaterial({ map: tex });
+            const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), materialPreview);
+            prevScene.add(quad);
+            const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+            const oldRenderTarget = renderer.getRenderTarget();
+            renderer.setRenderTarget(rt);
+            renderer.clear();
+            renderer.render(prevScene, ortho);
+
+            const buffer = new Uint8Array(w * h * 4);
+            try {
+                renderer.readRenderTargetPixels(rt, 0, 0, w, h, buffer);
+            } catch (e) {
+                console.warn('readRenderTargetPixels failed', e);
+                renderer.setRenderTarget(oldRenderTarget);
+                rt.dispose();
+                materialPreview.dispose();
+                quad.geometry.dispose();
+                return;
+            }
+
+            renderer.setRenderTarget(oldRenderTarget);
+
+            // create canvas and put pixels (flip Y)
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            const imageData = ctx.createImageData(w, h);
+            // flip rows while copying
+            for (let y = 0; y < h; y++) {
+                const srcRow = (h - 1 - y) * w * 4;
+                const dstRow = y * w * 4;
+                for (let i = 0; i < w * 4; i++) {
+                    imageData.data[dstRow + i] = buffer[srcRow + i];
+                }
+            }
+            ctx.putImageData(imageData, 0, 0);
+            preview.src = canvas.toDataURL('image/png');
+
+            // cleanup
+            rt.dispose();
+            materialPreview.dispose();
+            quad.geometry.dispose();
+        }
+    </script>
+    <!-- Modal for zoomed preview -->
+    <div id="previewModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);align-items:center;justify-content:center;z-index:10000">
+        <div style="position:relative;max-width:90vw;max-height:90vh;">
+            <button id="closePreview" style="position:absolute;right:-16px;top:-16px;background:#fff;border-radius:50%;width:32px;height:32px;border:0;cursor:pointer">×</button>
+            <img id="previewLarge" src="" style="display:block;max-width:90vw;max-height:90vh;border-radius:6px;" />
+        </div>
+    </div>
+    <script>
+        (function(){
+            const modal = document.getElementById('previewModal');
+            const closeBtn = document.getElementById('closePreview');
+            const previewLarge = document.getElementById('previewLarge');
+            if (closeBtn && modal) closeBtn.addEventListener('click', () => { modal.style.display = 'none'; });
+            // clicking backdrop (outside the image) closes modal
+            if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });
+            // Escape key closes modal
+            document.addEventListener('keydown', (e) => { if ((e.key === 'Escape' || e.key === 'Esc') && modal && modal.style.display !== 'none') modal.style.display = 'none'; });
+            // clicking the large image also closes (convenience)
+            if (previewLarge) previewLarge.addEventListener('click', () => { if (modal) modal.style.display = 'none'; });
+        })();
     </script>
 </body>
 </html>
