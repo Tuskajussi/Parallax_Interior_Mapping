@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interior Parallax Mapping with Three.js</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/fflate@0.6.9/umd/index.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/EXRLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <style>
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: sans-serif;
+            font-size: 13px;
+            z-index: 100;
+            min-width: 220px;
+        }
+        #controls h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            border-bottom: 1px solid #555;
+            padding-bottom: 5px;
+        }
+        #controls label {
+            display: block;
+            margin: 8px 0 3px 0;
+        }
+        #controls input[type="range"] {
+            width: 100%;
+        }
+        #controls .value {
+            float: right;
+            color: #8cf;
+        }
+        #controls .group {
+            margin-top: 12px;
+            padding-top: 8px;
+            border-top: 1px solid #444;
+        }
+        #canvasContainer {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 800px;
+            height: 600px;
+            min-width: 200px;
+            min-height: 150px;
+            resize: both;
+            overflow: hidden;
+            border: 2px solid #444;
+            border-radius: 8px;
+            background: #222;
+        }
+        #canvasContainer canvas {
+            width: 100% !important;
+            height: 100% !important;
+            display: block;
+        }
+    </style>
+</head>
+<body style="margin: 0; overflow: hidden; background: #111;">
+    <div id="canvasContainer">
+        <canvas id="glCanvas"></canvas>
+    </div>
+    <div id="controls">
+        <h3>Interior Parallax Controls</h3>
+        
+        <label>Depth Scale <span class="value" id="depthScaleVal">1.0</span></label>
+        <input type="range" id="depthScale" min="0" max="3" step="0.05" value="1.0">
+        
+        <div class="group">
+            <label>Flip X <span class="value" id="flipXVal">-1</span></label>
+            <input type="range" id="flipX" min="-1" max="1" step="0.1" value="-1">
+            
+            <label>Flip Y <span class="value" id="flipYVal">1</span></label>
+            <input type="range" id="flipY" min="-1" max="1" step="0.1" value="1">
+            
+            <label>Flip Z <span class="value" id="flipZVal">1</span></label>
+            <input type="range" id="flipZ" min="-1" max="1" step="0.1" value="1">
+        </div>
+        
+        <div class="group">
+            <label>Rotation X° <span class="value" id="rotXVal">180</span></label>
+            <input type="range" id="rotX" min="-180" max="180" step="1" value="180">
+            
+            <label>Rotation Y° <span class="value" id="rotYVal">0</span></label>
+            <input type="range" id="rotY" min="-180" max="180" step="1" value="0">
+            
+            <label>Rotation Z° <span class="value" id="rotZVal">-180</span></label>
+            <input type="range" id="rotZ" min="-180" max="180" step="1" value="-180">
+        </div>
+        
+        <div class="group">
+            <label>Upload Texture <span class="value" id="uploadedName">roomtest5.exr</span></label>
+            <input type="file" id="fileInput" accept=".exr,.jpg,.jpeg,.png,image/*">
+        </div>
+    </div>
+
+    <script>
+        const container = document.getElementById('canvasContainer');
+        const canvas = document.getElementById('glCanvas');
+        
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x222222);
+        const camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+
+        let material = null;
+        let plane = null;
+
+        const loader = new THREE.EXRLoader();
+        loader.load('roomtest5.exr', function(texture) {
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+
+            const geometry = new THREE.PlaneGeometry(10, 10, 1, 1);
+
+            // Load external GLSL shaders
+            const fileLoader = new THREE.FileLoader();
+            fileLoader.setResponseType('text');
+
+            fileLoader.load('shaders/pom.vert.glsl', function(vertexShader) {
+                fileLoader.load('shaders/pom.frag.glsl', function(fragmentShader) {
+                    material = new THREE.ShaderMaterial({
+                        uniforms: {
+                            map: { value: texture },
+                            depthScale: { value: 1.0 },
+                            flipVector: { value: new THREE.Vector3(-1, 1, 1) },
+                            rotationDeg: { value: new THREE.Vector3(180, 0, -180) }
+                        },
+                        vertexShader: vertexShader,
+                        fragmentShader: fragmentShader
+                    });
+
+                    plane = new THREE.Mesh(geometry, material);
+                    plane.rotation.y = Math.PI / 6; // 30 degrees
+                    scene.add(plane);
+
+                    camera.position.z = 5;
+
+                    // Wire up UI controls
+                    setupControls();
+
+                    function animate() {
+                        requestAnimationFrame(animate);
+                        controls.update();
+                        renderer.render(scene, camera);
+                    }
+                    animate();
+                });
+            });
+        });
+
+        function setupControls() {
+            // Depth Scale
+            document.getElementById('depthScale').addEventListener('input', (e) => {
+                const val = parseFloat(e.target.value);
+                material.uniforms.depthScale.value = val;
+                document.getElementById('depthScaleVal').textContent = val.toFixed(2);
+            });
+
+            // Flip Vector
+            document.getElementById('flipX').addEventListener('input', (e) => {
+                material.uniforms.flipVector.value.x = parseFloat(e.target.value);
+                document.getElementById('flipXVal').textContent = e.target.value;
+            });
+            document.getElementById('flipY').addEventListener('input', (e) => {
+                material.uniforms.flipVector.value.y = parseFloat(e.target.value);
+                document.getElementById('flipYVal').textContent = e.target.value;
+            });
+            document.getElementById('flipZ').addEventListener('input', (e) => {
+                material.uniforms.flipVector.value.z = parseFloat(e.target.value);
+                document.getElementById('flipZVal').textContent = e.target.value;
+            });
+
+            // Rotation
+            document.getElementById('rotX').addEventListener('input', (e) => {
+                material.uniforms.rotationDeg.value.x = parseFloat(e.target.value);
+                document.getElementById('rotXVal').textContent = e.target.value;
+            });
+            document.getElementById('rotY').addEventListener('input', (e) => {
+                material.uniforms.rotationDeg.value.y = parseFloat(e.target.value);
+                document.getElementById('rotYVal').textContent = e.target.value;
+            });
+            document.getElementById('rotZ').addEventListener('input', (e) => {
+                material.uniforms.rotationDeg.value.z = parseFloat(e.target.value);
+                document.getElementById('rotZVal').textContent = e.target.value;
+            });
+
+            // File upload -> replace material texture (roomtest5.exr remains default)
+            const fileInput = document.getElementById('fileInput');
+            if (fileInput) {
+                fileInput.addEventListener('change', (ev) => {
+                    const file = ev.target.files && ev.target.files[0];
+                    if (!file) return;
+                    const url = URL.createObjectURL(file);
+                    const nameEl = document.getElementById('uploadedName');
+                    const ext = file.name.split('.').pop().toLowerCase();
+
+                    function applyTexture(tex, isSRGB) {
+                        tex.wrapS = THREE.RepeatWrapping;
+                        tex.wrapT = THREE.RepeatWrapping;
+                        tex.encoding = isSRGB ? THREE.sRGBEncoding : THREE.LinearEncoding;
+                        tex.needsUpdate = true;
+                        material.uniforms.map.value = tex;
+                        nameEl.textContent = file.name;
+                    }
+
+                    if (ext === 'exr') {
+                        const exrLoader = new THREE.EXRLoader();
+                        exrLoader.load(url, (tex) => {
+                            applyTexture(tex, false);
+                            URL.revokeObjectURL(url);
+                        }, undefined, (err) => {
+                            console.error('EXR load error', err);
+                            URL.revokeObjectURL(url);
+                        });
+                    } else {
+                        const texLoader = new THREE.TextureLoader();
+                        texLoader.load(url, (tex) => {
+                            applyTexture(tex, true);
+                            URL.revokeObjectURL(url);
+                        }, undefined, (err) => {
+                            console.error('Texture load error', err);
+                            URL.revokeObjectURL(url);
+                        });
+                    }
+                });
+            }
+        }
+
+        // Resize handling with ResizeObserver for container
+        const resizeObserver = new ResizeObserver(entries => {
+            for (let entry of entries) {
+                const width = entry.contentRect.width;
+                const height = entry.contentRect.height;
+                camera.aspect = width / height;
+                camera.updateProjectionMatrix();
+                renderer.setSize(width, height);
+            }
+        });
+        resizeObserver.observe(container);
+    </script>
+</body>
+</html>
