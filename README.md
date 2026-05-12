@@ -21,7 +21,3 @@ Usage:
 - Use the mouse to orbit the view (left-drag) and scroll to zoom.
 - Use the controls on the left to tweak `Depth Scale`, `Flip`, `Rotation` and `Plane Tilt`.
 - Upload a new texture (EXR, JPG, PNG) using the file input. A small preview is shown beneath the upload control.
-
-Notes:
-- EXR loading requires `fflate` (already included) and may be large. If you upload an EXR, color preview may be generated from the current renderer snapshot.
-- If you have a specific Blender node setup you'd like integrated, we can further refine the shader to match it precisely.
