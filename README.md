@@ -25,5 +25,3 @@ Usage:
 Notes:
 - EXR loading requires `fflate` (already included) and may be large. If you upload an EXR, color preview may be generated from the current renderer snapshot.
 - If you have a specific Blender node setup you'd like integrated, we can further refine the shader to match it precisely.
-
-License: choose a license for your project before publishing on GitHub.
